@@ -1,0 +1,30 @@
+group 'com.usachev'
+version '1.0'
+
+apply plugin: 'java'
+apply plugin: 'application'
+
+mainClassName = 'com.usachev.Main'
+
+sourceCompatibility = 1.8
+targetCompatibility = 1.8
+
+repositories {
+    mavenCentral()
+}
+
+jar {
+    from {
+        configurations.compile.collect {
+            it.isDirectory() ? it : zipTree(it)
+        }
+    }
+    manifest {
+        attributes 'Manifest-Version': 1.0,
+                'Main-Class': mainClassName
+    }
+}
+
+dependencies {
+    compile group: 'org.openstreetmap.osmosis', name: 'osmosis-xml', version: '0.45'
+}
