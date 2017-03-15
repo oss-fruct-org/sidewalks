@@ -67,6 +67,8 @@ public class Main {
         factory.setProperty(XMLInputFactory.IS_COALESCING, Boolean.TRUE);
         XMLStreamReader r = factory.createXMLStreamReader(input);
         SidewalkProcessor processor = new SidewalkProcessor(args[1]);
+        processor.enableSearchObstacles(true);
+        processor.enableSearchUnknownObstacles(true);
         Sink sink = new Sink() {
             @Override
             public void process(EntityContainer entityContainer) {

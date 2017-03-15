@@ -17,11 +17,11 @@ import org.openstreetmap.osmosis.xml.v0_6.XmlWriter;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 
 import javafx.util.Pair;
-
 
 /**
  * Created by Andrey on 23.12.2016.
@@ -47,6 +47,17 @@ public class SidewalkProcessor {
     private ArrayList<RelationContainer> relations = new ArrayList<>();
     private ArrayList<WayContainer> sidewalks = new ArrayList<>();
 
+    // obstacles
+    private ArrayList<NodeContainer> obstacle_traffic_signals = new ArrayList<>();
+    private ArrayList<NodeContainer> obstacle_crossing = new ArrayList<>();
+    private ArrayList<NodeContainer> obstacle_bus_stops = new ArrayList<>();
+    private ArrayList<NodeContainer> obstacle_barrier_gate = new ArrayList<>();
+    private ArrayList<NodeContainer> obstacle_blocks = new ArrayList<>();
+    private ArrayList<NodeContainer> obstacle_steps = new ArrayList<>();
+    private long nodes_count = 0;
+    private boolean search_obstacles = false;
+    private boolean search_unknown_obstacles = false;
+
     // For getting node by its id (e.g. in WayNode)
     private HashMap<Long, NodeContainer> nodesMap = new HashMap<>();
     // For getting way by its id
@@ -69,21 +80,125 @@ public class SidewalkProcessor {
 
     public void addBound(BoundContainer boundContainer) {
         long id = boundContainer.getEntity().getId();
-        if (id > maxId) maxId = id;
+        if (id > maxId) {
+            maxId = id;
+        }
         bounds.add(boundContainer);
+    }
+    
+    public void enableSearchObstacles(boolean isEnable) {
+        this.search_obstacles = isEnable;
+    }
+    
+    public void enableSearchUnknownObstacles(boolean isEnable) {
+        this.search_unknown_obstacles = isEnable;
     }
 
     public void addNode(NodeContainer nodeContainer) {
         nodes.add(nodeContainer);
         long id = nodeContainer.getEntity().getId();
-        if (id > maxId) maxId = id;
+        if (this.search_obstacles) {
+            Collection<Tag> tags = nodeContainer.getEntity().getTags();
+            if (tags.size() > 0) {
+                boolean flag = false;
+                for (Tag t : tags) {
+                    // Перекрестки со сфетофорами
+                    if ((t.getKey().equals("highway") || t.getKey().equals("was:highway")) && t.getValue().equals("traffic_signals")
+                            || t.getKey().equals("crossing") && t.getValue().equals("traffic_signals")) {
+                        obstacle_traffic_signals.add(nodeContainer);
+                        flag = true;
+                        continue;
+                    }
+
+                    // Перекрестки без светофоров
+                    if ((t.getKey().equals("highway") || t.getKey().equals("was:highway") || t.getKey().equals("railway")) && t.getValue().equals("crossing")
+                            || t.getKey().equals("crossing") && (t.getValue().equals("uncontrolled") || t.getValue().equals("unmarked") || t.getValue().equals("unknown"))) {
+                        obstacle_crossing.add(nodeContainer);
+                        flag = true;
+                        continue;
+                    }
+
+                    // остановки
+                    if (t.getKey().equals("highway") && t.getValue().equals("bus_stop")) {
+                        obstacle_bus_stops.add(nodeContainer);
+                        flag = true;
+                        continue;
+                    }
+
+                    // ворота http://wiki.openstreetmap.org/wiki/RU:Key:barrier
+                    if (t.getKey().equals("barrier") && (t.getValue().equals("gate") || t.getValue().equals("lift_gate") || t.getValue().equals("chain") || t.getValue().equals("turnstile") || t.getValue().equals("kissing_gate") || t.getValue().equals("swing_gate"))) {
+                        obstacle_barrier_gate.add(nodeContainer);
+                        flag = true;
+                        continue;
+                    }
+
+                    // препятствия
+                    if (t.getKey().equals("barrier") && (t.getValue().equals("block") || t.getValue().equals("bollard") || t.getValue().equals("cycle_barrier"))
+                            || t.getKey().equals("amenity") && t.getValue().equals("waste_disposal")
+                            || t.getKey().equals("leisure") && t.getValue().equals("playground")) {
+                        obstacle_blocks.add(nodeContainer);
+                        flag = true;
+                        continue;
+                    }
+
+                    // лестницы
+                    if (t.getKey().equals("highway") && t.getValue().equals("steps")) {
+                        obstacle_steps.add(nodeContainer);
+                        flag = true;
+                        continue;
+                    }
+
+                    // бордюры
+                    if (t.getKey().equals("barrier") && t.getValue().equals("kerb")) {
+                        obstacle_kerb.add(nodeContainer);
+                        flag = true;
+                        continue;
+                    }
+
+                    if (this.search_unknown_obstacles) {
+                        if (t.getKey().equals("highway") && (t.getValue().equals("give_way") || t.getValue().equals("milestone") || t.getValue().equals("turning_circle") || t.getValue().equals("speed_camera") || t.getValue().equals("stop") || t.getValue().equals("street_lamp") || t.getValue().equals("passing_place"))
+                                || t.getKey().equals("direction")
+                                || t.getKey().equals("created_by") && tags.size() == 1
+                                || t.getKey().equals("ref") && tags.size() == 1
+                                || t.getKey().equals("public_transport") && t.getValue().equals("stop_position")
+                                || t.getKey().equals("traffic_sign")
+                                || (t.getKey().equals("railway") || t.getKey().equals("was:railway")) && (t.getValue().equals("level_crossing") || t.getValue().equals("station") || t.getValue().equals("subway_entrance"))
+                                || t.getKey().equals("traffic_calming")
+                                || t.getKey().equals("entrance")
+                                || t.getKey().equals("maxspeed")
+                                || t.getKey().equals("noexit")
+                                || t.getKey().equals("shop")
+                                || t.getKey().equals("ford")
+                                || t.getKey().equals("historic")
+                                || t.getKey().equals("fixme")
+                                || t.getKey().equals("tourism")
+                                || t.getKey().equals("amenity") && (t.getValue().equals("parking_entrance") || t.getValue().equals("post_office") || t.getValue().equals("cafe") || t.getValue().equals("parking") || t.getValue().equals("atm") || t.getValue().equals("bank") || t.getValue().equals("car_wash"))
+                                || t.getKey().equals("barrier") && t.getValue().equals("entrance") || t.getValue().equals("toll_booth")) {
+                            flag = true;
+                            continue;
+                        }
+                    }
+                }
+                if (!flag && this.search_unknown_obstacles) {
+                    log(nodeContainer.getEntity().toString() + String.valueOf(nodes_count++));
+                    for (Tag t : tags) {
+                        log(t.getKey() + " = " + t.getValue());
+                    }
+                }
+            }
+        }
+        if (id > maxId) {
+            maxId = id;
+        }
         nodesMap.put(id, nodeContainer);
     }
 
     public void addWay(WayContainer wayContainer) {
         ways.add(wayContainer);
         long id = wayContainer.getEntity().getId();
-        if (id > maxId) maxId = id;
+        if (id > maxId) {
+            maxId = id;
+        }
         waysMap.put(id, wayContainer);
 
         List<WayNode> wayNodes = wayContainer.getEntity().getWayNodes();
@@ -101,7 +216,9 @@ public class SidewalkProcessor {
 
     public void addRelation(RelationContainer relationContainer) {
         long id = relationContainer.getEntity().getId();
-        if (id > maxId) maxId = id;
+        if (id > maxId) {
+            maxId = id;
+        }
         relations.add(relationContainer);
     }
 
@@ -112,18 +229,28 @@ public class SidewalkProcessor {
         for (WayContainer way : ways) {
             boolean hasFootway = false;
             boolean hasSidewalk = false;
+            boolean hasDeclaredSidewalk = false;
             for (Tag tag : way.getEntity().getTags()) {
                 if (tag.getKey().equals("highway") && tag.getValue().equals("footway")) {
                     hasFootway = true;
                 }
                 if (tag.getKey().equals("sidewalk") && !tag.getValue().equals("none") && !tag.getValue().equals("no")) {
-                    hasSidewalk = true;
+                    if (tag.getValue().equals("yes")) {
+                        hasDeclaredSidewalk = true;
+                    } else if (determineSidewalk(way) != null) {
+                        hasSidewalk = true;
+                    } else {
+                        log("Undetected sidewalk type: " + way.getEntity().toString());
+                    }
                 }
             }
 //            if (!hasFootway)
-                containers.add(way);
+            containers.add(way);
             if (hasSidewalk) {
                 sidewalks.add(way);
+            }
+            if (!hasSidewalk && hasDeclaredSidewalk) {
+                log("The sidewalk should be clarified: " + way.getEntity().toString());
             }
         }
         ways = containers;
@@ -135,8 +262,14 @@ public class SidewalkProcessor {
             ArrayList<WayNode> wayNodesRight = new ArrayList<>();
 
             String sidewalkDirection = determineSidewalk(way);
-            if (sidewalkDirection == null)
-                throw new UnexpectedSidewalkTypeException();
+            if (sidewalkDirection == null) {
+                String errMessage = way.getEntity().toString() + "\n";
+                for (Tag tag : way.getEntity().getTags()) {
+                    errMessage += "{key=" + tag.getKey() + ", value=" + tag.getValue() + "};";
+                }
+
+                throw new UnexpectedSidewalkTypeException(errMessage);
+            }
 
             for (int i = 0; i < wayNodes.size(); i++) {
                 NodeContainer node = nodesMap.get(wayNodes.get(i).getNodeId());
@@ -165,8 +298,7 @@ public class SidewalkProcessor {
                         nearests = findNearestNodes(node, initialAngle, prevNodeId);
                         nearestLeft = nodesMap.get(nearests.getKey());
                         nearestRight = nodesMap.get(nearests.getValue());
-                    }
-                    else {
+                    } else {
                         // Swap first and second if we use next node to find nearest (reverse vector firstDirection)
                         nearests = findNearestNodes(node, initialAngle, nextNodeId);
                         nearestRight = nodesMap.get(nearests.getKey());
@@ -179,8 +311,9 @@ public class SidewalkProcessor {
                     String leftSidewalkType = determineCurrentSidewalk(nearestLeft);
                     String rightSidewalkType = determineCurrentSidewalk(nearestRight);
                     String initSidewalkType = determineSidewalk(way);
-                    if (initSidewalkType == null)
+                    if (initSidewalkType == null) {
                         throw new UnexpectedSidewalkTypeException();
+                    }
 
                     Long processingNodeId = prevNodeId != null ? prevNodeId : nextNodeId;
                     NodeContainer processingNode = nodesMap.get(processingNodeId);
@@ -207,16 +340,18 @@ public class SidewalkProcessor {
                                 }
 
                                 if (!hasProcessedNode) {
-                                    if (inverseDirection)
+                                    if (inverseDirection) {
                                         newNode = GeoUtil.moveNode(node, nearestLeft, processingNode, GeoUtil.LEFT);
-                                    else
+                                    } else {
                                         newNode = GeoUtil.moveNode(node, processingNode, nearestLeft, GeoUtil.LEFT);
+                                    }
                                     wayNodesLeft.add(new WayNode(newNode.getEntity().getId()));
                                     newWritableNodes.add(newNode);
 
                                     ArrayList<CrossroadAdjacent> list = new ArrayList<>();
-                                    if (processedCrossroads.containsKey(crossroadNodeId))
+                                    if (processedCrossroads.containsKey(crossroadNodeId)) {
                                         list = processedCrossroads.get(crossroadNodeId);
+                                    }
                                     list.add(new CrossroadAdjacent(processingNodeId, inverseDirection ? RIGHT : LEFT, newNode.getEntity().getId()));
                                     list.add(new CrossroadAdjacent(nearestLeftId, inverseDirection ? LEFT : RIGHT, newNode.getEntity().getId()));
                                     processedCrossroads.put(
@@ -242,8 +377,9 @@ public class SidewalkProcessor {
                                 newWritableNodes.add(newTrailNode);
 
                                 ArrayList<CrossroadAdjacent> list = new ArrayList<>();
-                                if (processedCrossroads.containsKey(crossroadNodeId))
+                                if (processedCrossroads.containsKey(crossroadNodeId)) {
                                     list = processedCrossroads.get(crossroadNodeId);
+                                }
                                 list.add(new CrossroadAdjacent(processingNodeId, inverseDirection ? RIGHT : LEFT, newNode.getEntity().getId()));
                                 processedCrossroads.put(
                                         crossroadNodeId,
@@ -288,17 +424,19 @@ public class SidewalkProcessor {
                                 }
 
                                 if (!hasProcessedNode) {
-                                    if (inverseDirection)
+                                    if (inverseDirection) {
                                         newNode = GeoUtil.moveNode(node, nearestRight, processingNode, GeoUtil.RIGHT);
-                                    else
+                                    } else {
                                         newNode = GeoUtil.moveNode(node, processingNode, nearestRight, GeoUtil.RIGHT);
+                                    }
 
                                     wayNodesRight.add(new WayNode(newNode.getEntity().getId()));
                                     newWritableNodes.add(newNode);
 
                                     ArrayList<CrossroadAdjacent> list = new ArrayList<>();
-                                    if (processedCrossroads.containsKey(crossroadNodeId))
+                                    if (processedCrossroads.containsKey(crossroadNodeId)) {
                                         list = processedCrossroads.get(crossroadNodeId);
+                                    }
                                     list.add(new CrossroadAdjacent(processingNodeId, inverseDirection ? LEFT : RIGHT, newNode.getEntity().getId()));
                                     list.add(new CrossroadAdjacent(nearestRightId, inverseDirection ? RIGHT : LEFT, newNode.getEntity().getId()));
                                     processedCrossroads.put(
@@ -324,8 +462,9 @@ public class SidewalkProcessor {
                                 newWritableNodes.add(newTrailNode);
 
                                 ArrayList<CrossroadAdjacent> list = new ArrayList<>();
-                                if (processedCrossroads.containsKey(crossroadNodeId))
+                                if (processedCrossroads.containsKey(crossroadNodeId)) {
                                     list = processedCrossroads.get(crossroadNodeId);
+                                }
                                 list.add(new CrossroadAdjacent(processingNodeId, inverseDirection ? LEFT : RIGHT, newNode.getEntity().getId()));
                                 processedCrossroads.put(
                                         crossroadNodeId,
@@ -356,20 +495,24 @@ public class SidewalkProcessor {
                 } else {
                     if (sidewalkDirection.equals("both") || sidewalkDirection.equals("left")) {
                         NodeContainer prevNode = null, nextNode = null;
-                        if (i > 0)
+                        if (i > 0) {
                             prevNode = nodesMap.get(wayNodes.get(i - 1).getNodeId());
-                        if (i < wayNodes.size() - 1)
+                        }
+                        if (i < wayNodes.size() - 1) {
                             nextNode = nodesMap.get(wayNodes.get(i + 1).getNodeId());
+                        }
                         NodeContainer newNode = GeoUtil.moveNode(node, prevNode, nextNode, GeoUtil.LEFT);
                         wayNodesLeft.add(new WayNode(newNode.getEntity().getId()));
                         newWritableNodes.add(newNode);
                     }
                     if (sidewalkDirection.equals("both") || sidewalkDirection.equals("right")) {
                         NodeContainer prevNode = null, nextNode = null;
-                        if (i > 0)
+                        if (i > 0) {
                             prevNode = nodesMap.get(wayNodes.get(i - 1).getNodeId());
-                        if (i < wayNodes.size() - 1)
+                        }
+                        if (i < wayNodes.size() - 1) {
                             nextNode = nodesMap.get(wayNodes.get(i + 1).getNodeId());
+                        }
                         NodeContainer newNode = GeoUtil.moveNode(node, prevNode, nextNode, GeoUtil.RIGHT);
                         wayNodesRight.add(new WayNode(newNode.getEntity().getId()));
                         newWritableNodes.add(newNode);
@@ -388,71 +531,77 @@ public class SidewalkProcessor {
         }
         insertStashedNodes();
         writeOsmXml();
-        writeSidewalks();
+        //writeSidewalks();
     }
 
     /**
-     * Determine sidewalk type of node which belong to appropriate way in currentNodeWayMap
-     * Return null if there is no sidewalk
+     * Determine sidewalk type of node which belong to appropriate way in
+     * currentNodeWayMap Return null if there is no sidewalk
      */
     private String determineCurrentSidewalk(NodeContainer node) {
         Long wayId = currentNodeWayMap.get(node.getEntity().getId());
         for (Tag tag : waysMap.get(wayId).getEntity().getTags()) {
-            if (tag.getKey().equals("sidewalk") && (tag.getValue().equals("both") || tag.getValue().equals("left") || tag.getValue().equals("right")))
+            if (tag.getKey().equals("sidewalk") && (tag.getValue().equals("both") || tag.getValue().equals("left") || tag.getValue().equals("right"))) {
                 return tag.getValue();
+            }
         }
         return null;
     }
 
     private String determineSidewalk(WayContainer way) {
-        for(Tag tag : way.getEntity().getTags()) {
-            if (tag.getKey().equals("sidewalk") && (tag.getValue().equals("both") || tag.getValue().equals("left") || tag.getValue().equals("right")))
+        for (Tag tag : way.getEntity().getTags()) {
+            if (tag.getKey().equals("sidewalk") && (tag.getValue().equals("both") || tag.getValue().equals("left") || tag.getValue().equals("right"))) {
                 return tag.getValue();
+            }
         }
         return null;
     }
 
     private boolean shouldUniteSidewalks(NodeContainer crossroad, Long processingNodeId, NodeContainer nearestNode,
-                                         String processingSidewalkType, int processingDirection,
-                                         String nearestSidewalkType, int nearestNodeHand) {
+            String processingSidewalkType, int processingDirection,
+            String nearestSidewalkType, int nearestNodeHand) {
 
         Long wayId = currentNodeWayMap.get(processingNodeId);
         int nearestEdgeDirection = edgeDirection(crossroad, nearestNode);
 
         // TODO: think about conditions
-        if (nearestNodeHand == NEAREST_LEFT &&
-                (processingSidewalkType.equals("left") || processingSidewalkType.equals("both"))) {
+        if (nearestNodeHand == NEAREST_LEFT
+                && (processingSidewalkType.equals("left") || processingSidewalkType.equals("both"))) {
             if (processingDirection == TO_CROSSROAD) {
-                if (nearestEdgeDirection == TO_CROSSROAD &&
-                        (nearestSidewalkType.equals("right") || nearestSidewalkType.equals("both")))
+                if (nearestEdgeDirection == TO_CROSSROAD
+                        && (nearestSidewalkType.equals("right") || nearestSidewalkType.equals("both"))) {
                     return true;
-                else if (nearestEdgeDirection == FROM_CROSSROAD &&
-                        (nearestSidewalkType.equals("left") || nearestSidewalkType.equals("both")))
+                } else if (nearestEdgeDirection == FROM_CROSSROAD
+                        && (nearestSidewalkType.equals("left") || nearestSidewalkType.equals("both"))) {
                     return true;
+                }
             } else if (processingDirection == FROM_CROSSROAD) {
-                if (nearestEdgeDirection == TO_CROSSROAD &&
-                        (nearestSidewalkType.equals("left") || nearestSidewalkType.equals("both")))
+                if (nearestEdgeDirection == TO_CROSSROAD
+                        && (nearestSidewalkType.equals("left") || nearestSidewalkType.equals("both"))) {
                     return true;
-                else if (nearestEdgeDirection == FROM_CROSSROAD &&
-                        (nearestSidewalkType.equals("right") || nearestSidewalkType.equals("both")))
+                } else if (nearestEdgeDirection == FROM_CROSSROAD
+                        && (nearestSidewalkType.equals("right") || nearestSidewalkType.equals("both"))) {
                     return true;
+                }
             }
-        } else if (nearestNodeHand == NEAREST_RIGHT &&
-                (processingSidewalkType.equals("right") || processingSidewalkType.equals("both"))) {
+        } else if (nearestNodeHand == NEAREST_RIGHT
+                && (processingSidewalkType.equals("right") || processingSidewalkType.equals("both"))) {
             if (processingDirection == TO_CROSSROAD) {
-                if (nearestEdgeDirection == TO_CROSSROAD &&
-                        (nearestSidewalkType.equals("left") || nearestSidewalkType.equals("both")))
+                if (nearestEdgeDirection == TO_CROSSROAD
+                        && (nearestSidewalkType.equals("left") || nearestSidewalkType.equals("both"))) {
                     return true;
-                else if (nearestEdgeDirection == FROM_CROSSROAD &&
-                        (nearestSidewalkType.equals("right") || nearestSidewalkType.equals("both")))
+                } else if (nearestEdgeDirection == FROM_CROSSROAD
+                        && (nearestSidewalkType.equals("right") || nearestSidewalkType.equals("both"))) {
                     return true;
+                }
             } else if (processingDirection == FROM_CROSSROAD) {
-                if (nearestEdgeDirection == TO_CROSSROAD &&
-                        (nearestSidewalkType.equals("right") || nearestSidewalkType.equals("both")))
+                if (nearestEdgeDirection == TO_CROSSROAD
+                        && (nearestSidewalkType.equals("right") || nearestSidewalkType.equals("both"))) {
                     return true;
-                else if (nearestEdgeDirection == FROM_CROSSROAD &&
-                        (nearestSidewalkType.equals("left") || nearestSidewalkType.equals("both")))
+                } else if (nearestEdgeDirection == FROM_CROSSROAD
+                        && (nearestSidewalkType.equals("left") || nearestSidewalkType.equals("both"))) {
                     return true;
+                }
             }
         }
 
@@ -472,12 +621,13 @@ public class SidewalkProcessor {
         Long nextId = node2.getEntity().getId();
         ArrayList<WayNode> wayNodes = ((ArrayList<WayNode>) way.getEntity().getWayNodes());
         for (int i = 0; i < wayNodes.size(); i++) {
-            if (i < wayNodes.size() - 1 && wayNodes.get(i).getNodeId() == prevId &&
-                    wayNodes.get(i + 1).getNodeId() == nextId) {
+            if (i < wayNodes.size() - 1 && wayNodes.get(i).getNodeId() == prevId
+                    && wayNodes.get(i + 1).getNodeId() == nextId) {
                 return i + 1;
-            } else if (i > 0 && wayNodes.get(i).getNodeId() == prevId &&
-                    wayNodes.get(i - 1).getNodeId() == nextId)
+            } else if (i > 0 && wayNodes.get(i).getNodeId() == prevId
+                    && wayNodes.get(i - 1).getNodeId() == nextId) {
                 return i;
+            }
         }
         return -1;
     }
@@ -487,10 +637,11 @@ public class SidewalkProcessor {
         List<WayNode> wayNodes = waysMap.get(wayId).getEntity().getWayNodes();
         for (int i = 0; i < wayNodes.size(); i++) {
             if (wayNodes.get(i).getNodeId() == crossroad.getEntity().getId()) {
-                if (i > 0 && wayNodes.get(i - 1).getNodeId() == node.getEntity().getId())
+                if (i > 0 && wayNodes.get(i - 1).getNodeId() == node.getEntity().getId()) {
                     return TO_CROSSROAD;
-                else if (i < wayNodes.size() - 1 && wayNodes.get(i + 1).getNodeId() == node.getEntity().getId())
+                } else if (i < wayNodes.size() - 1 && wayNodes.get(i + 1).getNodeId() == node.getEntity().getId()) {
                     return FROM_CROSSROAD;
+                }
             }
         }
         return 0;
@@ -520,8 +671,8 @@ public class SidewalkProcessor {
 
                 if (initialAngle < 0) {
                     if (nearestRightAngle < initialAngle) {
-                        if (currAngle > initialAngle ||
-                                currAngle < nearestRightAngle) {
+                        if (currAngle > initialAngle
+                                || currAngle < nearestRightAngle) {
                             nearestRightAngle = currAngle;
                             nearestRightId = adjId;
                         }
@@ -604,66 +755,80 @@ public class SidewalkProcessor {
     private void writeOsmXml() {
         XmlWriter xmlWriter = new XmlWriter(new File(outputFileName + ".osm"), CompressionMethod.None);
 
-        for (BoundContainer bound : bounds)
+        for (BoundContainer bound : bounds) {
             xmlWriter.process(bound);
-        for (NodeContainer node : nodes)
+        }
+        for (NodeContainer node : nodes) {
             xmlWriter.process(node);
-        for (NodeContainer node : newWritableNodes)
+        }
+        for (NodeContainer node : newWritableNodes) {
             xmlWriter.process(node);
+        }
         for (WayContainer way : ways) {
             Tag tagToRemove = null;
             boolean footwaySidewalk = false, highway = false;
             String name = "";
             for (Tag tag : way.getEntity().getTags()) {
-                if (tag.getKey().equals("footway") && tag.getValue().equals("sidewalk"))
+                if (tag.getKey().equals("footway") && tag.getValue().equals("sidewalk")) {
                     footwaySidewalk = true;
-                if (tag.getKey().equals("highway"))
+                }
+                if (tag.getKey().equals("highway")) {
                     highway = true;
+                }
                 if (tag.getKey().equals("sidewalk") && (tag.getValue().equals("both") || tag.getValue().equals("right") || tag.getValue().equals("left"))) {
                     tagToRemove = tag;
                 }
-                if (tag.getKey().equals("name"))
+                if (tag.getKey().equals("name")) {
                     name = tag.getValue();
+                }
             }
 
-            if (footwaySidewalk && highway)
-                log("Probably mutually exclusive tags: wayId=" + way.getEntity().getId() + " " + name);
+            if (footwaySidewalk && highway) {
+                log("Probably mutually exclusive tags: " + way.getEntity().toString());
+            }
             if (tagToRemove != null) {
                 way.getEntity().getTags().remove(tagToRemove);
                 way.getEntity().getTags().add(new Tag("foot", "no"));
             }
             xmlWriter.process(way);
         }
-        for (WayContainer way : newWritableWays)
+        for (WayContainer way : newWritableWays) {
             xmlWriter.process(way);
-        for (RelationContainer relation : relations)
+        }
+        for (RelationContainer relation : relations) {
             xmlWriter.process(relation);
+        }
 
         xmlWriter.complete();
         xmlWriter.release();
     }
 
-    private void writeSidewalks()  {
+    private void writeSidewalks() {
         XmlWriter xmlWriter = new XmlWriter(new File("sidewalks3.osm"), CompressionMethod.None);
 
-        for (BoundContainer bound : bounds)
+        for (BoundContainer bound : bounds) {
             xmlWriter.process(bound);
+        }
 
-        for (NodeContainer node : nodes)
+        for (NodeContainer node : nodes) {
             xmlWriter.process(node);
+        }
 
         for (WayContainer way : sidewalks) {
             xmlWriter.process(way);
         }
 
-        for (NodeContainer node : newWritableNodes)
+        for (NodeContainer node : newWritableNodes) {
             xmlWriter.process(node);
+        }
 
-        for (WayContainer way : newWritableWays)
+        for (WayContainer way : newWritableWays) {
             xmlWriter.process(way);
+        }
 
-        for (RelationContainer relation : relations)
+        for (RelationContainer relation : relations) {
             xmlWriter.process(relation);
+        }
 
         xmlWriter.complete();
         xmlWriter.release();
@@ -672,9 +837,11 @@ public class SidewalkProcessor {
     public static void log(String s) {
         System.out.println(s);
     }
+
     public static void log(double d) {
         System.out.println(String.valueOf(d));
     }
+
     public static void log(long l) {
         System.out.println(String.valueOf(l));
     }
