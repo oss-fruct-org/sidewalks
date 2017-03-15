@@ -54,6 +54,7 @@ public class SidewalkProcessor {
     private ArrayList<NodeContainer> obstacle_barrier_gate = new ArrayList<>();
     private ArrayList<NodeContainer> obstacle_blocks = new ArrayList<>();
     private ArrayList<NodeContainer> obstacle_steps = new ArrayList<>();
+    private ArrayList<NodeContainer> obstacle_kerb = new ArrayList<>();
     private long nodes_count = 0;
     private boolean search_obstacles = false;
     private boolean search_unknown_obstacles = false;
