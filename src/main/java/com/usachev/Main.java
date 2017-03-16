@@ -15,10 +15,21 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Map;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
+import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.CommandLineParser;
+import org.apache.commons.cli.Option;
+import org.apache.commons.cli.Options;
+import org.apache.commons.cli.DefaultParser;
+import org.apache.commons.cli.HelpFormatter;
+import org.apache.commons.cli.ParseException;
+
+
 
 
 /**
@@ -49,14 +60,45 @@ public class Main {
 
     public static void main(String[] args) throws IOException, XMLStreamException
     {
-        if (args.length < 2) {
-            System.out.println("1st argument should be OSM XML file, 2nd argument as output file name");
+        Options opts = new Options();
+        Option oInput = new Option("i", "input", true, "input OSM XML file");
+        oInput.setRequired(true);
+        opts.addOption(oInput);
+        
+        Option oOutput = new Option("o", "output", true, "output file name");
+        oOutput.setRequired(true);
+        opts.addOption(oOutput);
+        
+        Option oObstacles = new Option("e", "export-points", true, "File name to export obstacles if it required");
+        oObstacles.setRequired(false);
+        opts.addOption(oObstacles);
+        
+        Option oUnknownObstacles = new Option("u", "unknown-tags", true, "File name to export points with unknown tags");
+        oUnknownObstacles.setRequired(false);
+        opts.addOption(oUnknownObstacles);
+        
+        CommandLineParser parser = new DefaultParser();
+        HelpFormatter formatter = new HelpFormatter();
+        CommandLine cmd;
+        
+        try {
+            cmd = parser.parse(opts, args);
+        } catch (ParseException ex) { 
+            System.out.println(ex.getMessage());
+            formatter.printHelp("sidewalks", opts);
+            System.exit(1);
             return;
         }
+        
+        String inputFilePath = cmd.getOptionValue("input");
+        String outputFilePath = cmd.getOptionValue("output");
+        String obstaclesFilePath = cmd.getOptionValue("export-points");
+        String unknownTagsFilePath = cmd.getOptionValue("unknown-tags");
+        
 
         InputStream input;
         try {
-            input = new FileInputStream(args[0]);
+            input = new FileInputStream(inputFilePath);
         } catch (FileNotFoundException e) {
             e.printStackTrace();
             return;
@@ -66,9 +108,9 @@ public class Main {
         // configure it to create readers that coalesce adjacent character sections
         factory.setProperty(XMLInputFactory.IS_COALESCING, Boolean.TRUE);
         XMLStreamReader r = factory.createXMLStreamReader(input);
-        SidewalkProcessor processor = new SidewalkProcessor(args[1]);
-        processor.enableSearchObstacles(true);
-        processor.enableSearchUnknownObstacles(true);
+        SidewalkProcessor processor = new SidewalkProcessor(outputFilePath);
+        processor.enableSearchObstacles(obstaclesFilePath);
+        processor.enableSearchUnknownObstacles(unknownTagsFilePath);
         Sink sink = new Sink() {
             @Override
             public void process(EntityContainer entityContainer) {
@@ -96,18 +138,18 @@ public class Main {
             }
 
             @Override
-            public void complete() {
-
+            public void initialize(Map<String, Object> map) {
+                throw new UnsupportedOperationException("Not supported yet."); //To change body of generated methods, choose Tools | Templates.
             }
 
             @Override
-            public void initialize(Map<String, Object> metaData) {
-
+            public void complete() {
+                throw new UnsupportedOperationException("Not supported yet."); //To change body of generated methods, choose Tools | Templates.
             }
 
             @Override
             public void release() {
-
+                throw new UnsupportedOperationException("Not supported yet."); //To change body of generated methods, choose Tools | Templates.
             }
         };
 
@@ -119,6 +161,7 @@ public class Main {
         } catch (UnexpectedSidewalkTypeException e) {
             e.printStackTrace();
         }
+        processor.closeStreams();
     }
 
 

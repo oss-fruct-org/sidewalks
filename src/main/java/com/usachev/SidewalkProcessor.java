@@ -1,5 +1,6 @@
 package com.usachev;
 
+import com.google.gson.stream.JsonWriter;
 import com.usachev.model.CrossroadAdjacent;
 import com.usachev.model.StashedNode;
 
@@ -15,11 +16,18 @@ import org.openstreetmap.osmosis.xml.common.CompressionMethod;
 import org.openstreetmap.osmosis.xml.v0_6.XmlWriter;
 
 import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.OutputStreamWriter;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import javafx.util.Pair;
 
@@ -29,7 +37,7 @@ import javafx.util.Pair;
 @SuppressWarnings("WeakerAccess")
 public class SidewalkProcessor {
 
-    private String outputFileName;
+    private final String outputFileName;
 
     private final static int TO_CROSSROAD = 1;
     private final static int FROM_CROSSROAD = 2;
@@ -48,16 +56,11 @@ public class SidewalkProcessor {
     private ArrayList<WayContainer> sidewalks = new ArrayList<>();
 
     // obstacles
-    private ArrayList<NodeContainer> obstacle_traffic_signals = new ArrayList<>();
-    private ArrayList<NodeContainer> obstacle_crossing = new ArrayList<>();
-    private ArrayList<NodeContainer> obstacle_bus_stops = new ArrayList<>();
-    private ArrayList<NodeContainer> obstacle_barrier_gate = new ArrayList<>();
-    private ArrayList<NodeContainer> obstacle_blocks = new ArrayList<>();
-    private ArrayList<NodeContainer> obstacle_steps = new ArrayList<>();
-    private ArrayList<NodeContainer> obstacle_kerb = new ArrayList<>();
     private long nodes_count = 0;
     private boolean search_obstacles = false;
     private boolean search_unknown_obstacles = false;
+    private JsonWriter obstaclesStream = null;
+    private FileWriter unknownTagsLog = null;
 
     // For getting node by its id (e.g. in WayNode)
     private HashMap<Long, NodeContainer> nodesMap = new HashMap<>();
@@ -87,12 +90,44 @@ public class SidewalkProcessor {
         bounds.add(boundContainer);
     }
     
-    public void enableSearchObstacles(boolean isEnable) {
-        this.search_obstacles = isEnable;
+    public void enableSearchObstacles(String path) {
+        this.search_obstacles = false;
+        if (path != null) {
+            try {
+                this.obstaclesStream = new JsonWriter(new OutputStreamWriter(new FileOutputStream(path)));
+            try {
+                this.obstaclesStream.setIndent("  ");
+                this.obstaclesStream.beginArray();
+            } catch (IOException ex) {
+                Logger.getLogger(SidewalkProcessor.class.getName()).log(Level.SEVERE, null, ex);
+                    try {
+                        this.obstaclesStream.close();
+                    } catch (IOException ex1) {
+                        Logger.getLogger(SidewalkProcessor.class.getName()).log(Level.SEVERE, null, ex1);
+                    }
+                    this.obstaclesStream = null;
+            }
+            } catch (FileNotFoundException ex) {
+                Logger.getLogger(SidewalkProcessor.class.getName()).log(Level.SEVERE, null, ex);
+                this.obstaclesStream = null;
+                return;
+            }
+            this.search_obstacles = true;
+        }
     }
     
-    public void enableSearchUnknownObstacles(boolean isEnable) {
-        this.search_unknown_obstacles = isEnable;
+    public void enableSearchUnknownObstacles(String path) {
+        this.search_unknown_obstacles = false;
+        if (path != null) {
+            try {
+                this.unknownTagsLog = new FileWriter(path);
+            } catch (IOException ex) {
+                Logger.getLogger(SidewalkProcessor.class.getName()).log(Level.SEVERE, null, ex);
+                this.unknownTagsLog = null;
+                return;
+            }
+            this.search_unknown_obstacles = true;
+        }
     }
 
     public void addNode(NodeContainer nodeContainer) {
@@ -106,7 +141,7 @@ public class SidewalkProcessor {
                     // Перекрестки со сфетофорами
                     if ((t.getKey().equals("highway") || t.getKey().equals("was:highway")) && t.getValue().equals("traffic_signals")
                             || t.getKey().equals("crossing") && t.getValue().equals("traffic_signals")) {
-                        obstacle_traffic_signals.add(nodeContainer);
+                        this.printObstacleTag("traffic_signals", nodeContainer);
                         flag = true;
                         continue;
                     }
@@ -114,21 +149,22 @@ public class SidewalkProcessor {
                     // Перекрестки без светофоров
                     if ((t.getKey().equals("highway") || t.getKey().equals("was:highway") || t.getKey().equals("railway")) && t.getValue().equals("crossing")
                             || t.getKey().equals("crossing") && (t.getValue().equals("uncontrolled") || t.getValue().equals("unmarked") || t.getValue().equals("unknown"))) {
-                        obstacle_crossing.add(nodeContainer);
+                        this.printObstacleTag("crossing", nodeContainer);
                         flag = true;
                         continue;
                     }
 
                     // остановки
-                    if (t.getKey().equals("highway") && t.getValue().equals("bus_stop")) {
-                        obstacle_bus_stops.add(nodeContainer);
+                    if (t.getKey().equals("highway") && t.getValue().equals("bus_stop") 
+                            ||t.getKey().equals("public_transport") && t.getValue().equals("platform")) {
+                        this.printObstacleTag("bus_stop", nodeContainer);
                         flag = true;
                         continue;
                     }
 
                     // ворота http://wiki.openstreetmap.org/wiki/RU:Key:barrier
                     if (t.getKey().equals("barrier") && (t.getValue().equals("gate") || t.getValue().equals("lift_gate") || t.getValue().equals("chain") || t.getValue().equals("turnstile") || t.getValue().equals("kissing_gate") || t.getValue().equals("swing_gate"))) {
-                        obstacle_barrier_gate.add(nodeContainer);
+                        this.printObstacleTag("gate", nodeContainer);
                         flag = true;
                         continue;
                     }
@@ -137,21 +173,22 @@ public class SidewalkProcessor {
                     if (t.getKey().equals("barrier") && (t.getValue().equals("block") || t.getValue().equals("bollard") || t.getValue().equals("cycle_barrier"))
                             || t.getKey().equals("amenity") && t.getValue().equals("waste_disposal")
                             || t.getKey().equals("leisure") && t.getValue().equals("playground")) {
-                        obstacle_blocks.add(nodeContainer);
+                        this.printObstacleTag("blocks", nodeContainer);
                         flag = true;
                         continue;
                     }
 
                     // лестницы
                     if (t.getKey().equals("highway") && t.getValue().equals("steps")) {
-                        obstacle_steps.add(nodeContainer);
+                        this.printObstacleTag("steps", nodeContainer);
                         flag = true;
                         continue;
                     }
 
                     // бордюры
-                    if (t.getKey().equals("barrier") && t.getValue().equals("kerb")) {
-                        obstacle_kerb.add(nodeContainer);
+                    if (t.getKey().equals("barrier") && t.getValue().equals("kerb") ||
+                            t.getKey().equals("kerb")) {
+                        this.printObstacleTag("kerb", nodeContainer);
                         flag = true;
                         continue;
                     }
@@ -172,8 +209,9 @@ public class SidewalkProcessor {
                                 || t.getKey().equals("ford")
                                 || t.getKey().equals("historic")
                                 || t.getKey().equals("fixme")
+                                || t.getKey().equals("building") && t.getValue().equals("entrance")
                                 || t.getKey().equals("tourism")
-                                || t.getKey().equals("amenity") && (t.getValue().equals("parking_entrance") || t.getValue().equals("post_office") || t.getValue().equals("cafe") || t.getValue().equals("parking") || t.getValue().equals("atm") || t.getValue().equals("bank") || t.getValue().equals("car_wash"))
+                                || t.getKey().equals("amenity") && (t.getValue().equals("parking_entrance") || t.getValue().equals("post_office") || t.getValue().equals("cafe") || t.getValue().equals("parking") || t.getValue().equals("atm") || t.getValue().equals("bank") || t.getValue().equals("car_wash") || t.getValue().equals("bar"))
                                 || t.getKey().equals("barrier") && t.getValue().equals("entrance") || t.getValue().equals("toll_booth")) {
                             flag = true;
                             continue;
@@ -181,9 +219,14 @@ public class SidewalkProcessor {
                     }
                 }
                 if (!flag && this.search_unknown_obstacles) {
-                    log(nodeContainer.getEntity().toString() + String.valueOf(nodes_count++));
-                    for (Tag t : tags) {
-                        log(t.getKey() + " = " + t.getValue());
+                    try {
+                        this.unknownTagsLog.write(nodeContainer.getEntity().toString() + " (" + nodeContainer.getEntity().getLatitude() + ", " 
+                                + nodeContainer.getEntity().getLongitude() + ") " + String.valueOf(nodes_count++) + "\n");
+                        for (Tag t : tags) {
+                            this.unknownTagsLog.write(t.getKey() + "=" + t.getValue() + "\n");
+                        }
+                    } catch (IOException ex) {
+                        Logger.getLogger(SidewalkProcessor.class.getName()).log(Level.SEVERE, null, ex);
                     }
                 }
             }
@@ -847,4 +890,44 @@ public class SidewalkProcessor {
         System.out.println(String.valueOf(l));
     }
 
+    public void closeStreams() {
+        if (this.obstaclesStream != null) {
+            try {
+                this.obstaclesStream.endArray();
+                this.obstaclesStream.close();
+            } catch (IOException ex) {
+                Logger.getLogger(SidewalkProcessor.class.getName()).log(Level.SEVERE, null, ex);
+            }
+        }
+        if (unknownTagsLog != null) {
+            try {
+                this.unknownTagsLog.close();
+            } catch (IOException ex) {
+                Logger.getLogger(SidewalkProcessor.class.getName()).log(Level.SEVERE, null, ex);
+            }
+        }
+        log("FINISH HIM!!!");
+    }
+    
+    private void printObstacleTag(String type, NodeContainer node) {
+        try {
+            this.obstaclesStream.beginObject();
+            this.obstaclesStream.name("id");
+            this.obstaclesStream.value(node.getEntity().getId());
+            this.obstaclesStream.name("type");
+            this.obstaclesStream.value(type);
+            this.obstaclesStream.name("latitude");
+            this.obstaclesStream.value(node.getEntity().getLatitude());
+            this.obstaclesStream.name("longitude");
+            this.obstaclesStream.value(node.getEntity().getLongitude());
+            for (Tag t : node.getEntity().getTags()) {
+                this.obstaclesStream.name(t.getKey());
+                this.obstaclesStream.value(t.getValue());
+            }
+            this.obstaclesStream.endObject();
+        } catch (IOException ex) {
+            Logger.getLogger(SidewalkProcessor.class.getName()).log(Level.SEVERE, null, ex);
+        }
+            
+    }
 }
